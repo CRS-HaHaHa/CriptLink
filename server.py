@@ -5,12 +5,25 @@ import websockets
 
 CLIENTS = set()
 
-# Intercetta i controlli di Render (Health Checks) e risponde 200 OK
-async def process_request(path, request_headers):
-    # Se arriva una richiesta HTTP normale (es. HEAD o GET di Render senza upgrade a WebSocket)
-    if "Upgrade" not in request_headers or request_headers.get("Upgrade").lower() != "websocket":
-        return http.HTTPStatus.OK, [("Content-Type", "text/plain")], b"OK\n"
-    # Se è una richiesta WebSocket valida, lascia che websockets gestisca l'handshake
+async def process_request(*args, **kwargs):
+    """
+    Compatibile sia con websockets <12 (path, headers) 
+    sia con websockets >=12 (connection, request)
+    """
+    if len(args) == 2:
+        arg1, arg2 = args
+        # Nuova firma: (connection, request)
+        if hasattr(arg2, 'headers'):
+            connection, request = arg1, arg2
+            if request.headers.get("Upgrade", "").lower() != "websocket":
+                return connection.respond(http.HTTPStatus.OK, "OK\n")
+            return None
+        # Vecchia firma: (path, headers)
+        else:
+            path, headers = arg1, arg2
+            if headers.get("Upgrade", "").lower() != "websocket":
+                return http.HTTPStatus.OK, [("Content-Type", "text/plain")], b"OK\n"
+            return None
     return None
 
 async def relay_handler(websocket):
@@ -22,7 +35,7 @@ async def relay_handler(websocket):
                     try:
                         await client.send(message)
                     except Exception:
-                        CLIENTS.remove(client)
+                        CLIENTS.discard(client)
     except Exception:
         pass
     finally:
@@ -30,7 +43,6 @@ async def relay_handler(websocket):
 
 async def main():
     port = int(os.environ.get("PORT", 10000))
-    # Passiamo process_request al server
     async with websockets.serve(relay_handler, "0.0.0.0", port, process_request=process_request):
         await asyncio.Future()
 
