@@ -3,11 +3,6 @@ from aiohttp import web
 
 CLIENTS = set()
 
-# Gestisce sia GET che HEAD per Render Health Check
-async def health_check(request):
-    return web.Response(text="OK")
-
-# Gestisce le connessioni WebSocket
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -28,8 +23,8 @@ async def websocket_handler(request):
     return ws
 
 app = web.Application()
-# Mappa la radice per l'health check HTTP e la rotta WS
-app.router.add_head('/', health_check)
+
+# add_get gestisce sia GET (WebSocket upgrade) sia HEAD (Render Health Check)
 app.router.add_get('/', websocket_handler)
 
 if __name__ == '__main__':
