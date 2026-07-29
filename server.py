@@ -1,50 +1,37 @@
-import asyncio
 import os
-import http
-import websockets
+from aiohttp import web
 
 CLIENTS = set()
 
-async def process_request(*args, **kwargs):
-    """
-    Compatibile sia con websockets <12 (path, headers) 
-    sia con websockets >=12 (connection, request)
-    """
-    if len(args) == 2:
-        arg1, arg2 = args
-        # Nuova firma: (connection, request)
-        if hasattr(arg2, 'headers'):
-            connection, request = arg1, arg2
-            if request.headers.get("Upgrade", "").lower() != "websocket":
-                return connection.respond(http.HTTPStatus.OK, "OK\n")
-            return None
-        # Vecchia firma: (path, headers)
-        else:
-            path, headers = arg1, arg2
-            if headers.get("Upgrade", "").lower() != "websocket":
-                return http.HTTPStatus.OK, [("Content-Type", "text/plain")], b"OK\n"
-            return None
-    return None
+# Gestisce sia GET che HEAD per Render Health Check
+async def health_check(request):
+    return web.Response(text="OK")
 
-async def relay_handler(websocket):
-    CLIENTS.add(websocket)
+# Gestisce le connessioni WebSocket
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    CLIENTS.add(ws)
     try:
-        async for message in websocket:
-            for client in CLIENTS.copy():
-                if client != websocket:
-                    try:
-                        await client.send(message)
-                    except Exception:
-                        CLIENTS.discard(client)
-    except Exception:
-        pass
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                for client in CLIENTS.copy():
+                    if client != ws:
+                        try:
+                            await client.send_str(msg.data)
+                        except Exception:
+                            CLIENTS.discard(client)
     finally:
-        CLIENTS.discard(websocket)
+        CLIENTS.discard(ws)
 
-async def main():
+    return ws
+
+app = web.Application()
+# Mappa la radice per l'health check HTTP e la rotta WS
+app.router.add_head('/', health_check)
+app.router.add_get('/', websocket_handler)
+
+if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    async with websockets.serve(relay_handler, "0.0.0.0", port, process_request=process_request):
-        await asyncio.Future()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(app, host='0.0.0.0', port=port)
